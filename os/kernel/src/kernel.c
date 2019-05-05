@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <time.h>
+#include "drivers/vga/raytracing.h"
 
 typedef struct _linesStruct
 {
@@ -456,6 +457,10 @@ int kmain()
             {
                 shouldDrawLines = 0;
                 screenSaver = !screenSaver;
+            }
+            else if(c.scancode == 43) // ten drugi slash
+            {
+                ray_demo_main();
             }
             else{
                 if(video_card_is_text_mode())
