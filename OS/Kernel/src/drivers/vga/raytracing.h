@@ -4,7 +4,7 @@
 #include "raytracing/xyz.h"
 
 int RayFindObstacle
-    (const XYZ* eye, const XYZ* dir,
+    (XYZ* eye, XYZ* dir,
      double* HitDist, int* HitIndex,
      XYZ* HitLoc, XYZ* HitNormal);
 

@@ -47,8 +47,11 @@ const unsigned
     NumLights = NElems(Lights),
     MAXTRACE = 6;
 
+XYZ V;
+XYZ t;
+
 int RayFindObstacle
-    (const XYZ* eye, const XYZ* dir,
+    (XYZ* eye, XYZ* dir,
      double* HitDist, int* HitIndex,
      XYZ* HitLoc, XYZ* HitNormal)
 {
@@ -58,7 +61,6 @@ int RayFindObstacle
     int HitType = -1;
    {for(unsigned i=0; i<NumSpheres; ++i)
     {
-        XYZ V; 
         XYZ_sub_struct(&V, eye, &(Spheres[i].center));
         double r = Spheres[i].radius,
             DV = XYZ_dot(dir, &V),
@@ -74,10 +76,9 @@ int RayFindObstacle
                         -DV+SQt) / D2;
         if(Dist<1e-6 || Dist >= *HitDist)
             continue;
-        HitType = 1; HitIndex = i;
+        HitType = 1; *HitIndex = i;
         *HitDist = Dist;
-        XYZ t;
-        XYZ_mul_struct(&t, dir, HitDist);
+        XYZ_mul_value(&t, dir, *HitDist);
         XYZ_add_struct_to(&t, eye);
         XYZ_set_struct(HitLoc, &t);
         XYZ_sub_struct(&t, HitLoc, &(Spheres[i].center));
@@ -93,9 +94,8 @@ int RayFindObstacle
             Dist = (D2+Planes[i].offset) / DV;
         if(Dist<1e-6 || Dist>=*HitDist)
             continue;
-        HitType = 0; HitIndex = i;
+        HitType = 0; *HitIndex = i;
         *HitDist = Dist;
-        XYZ t;
         XYZ_mul_value(&t, dir, *HitDist);
         XYZ_add_struct_to(&t, eye);
         XYZ_set_struct(HitLoc, &t);
@@ -119,12 +119,18 @@ void InitArealightVectors()
                 2.0 * (rand() / (double)RAND_MAX - 0.5);
 }
 
-void RayTrace(XYZ* resultcolor, const XYZ* eye, const XYZ* dir, int k)
+XYZ HitLoc, HitNormal;
+XYZ DiffuseLight, SpecularLight;
+XYZ Pigment;
+XYZ VRT, VRT2;
+XYZ a,b;
+XYZ neye, eye2;
+XYZ res;
+void RayTrace(XYZ* resultcolor, XYZ* eye, XYZ* dir, int k)
 {
     double HitDist = 1e6;
-    XYZ HitLoc, HitNormal;
     int HitIndex, HitType;
-    HitType = RayFindObstacle(eye,dir, &HitDist, HitIndex, &HitLoc, &HitNormal);
+    HitType = RayFindObstacle(eye,dir, &HitDist, &HitIndex, &HitLoc, &HitNormal);
     if(HitType != -1)
     {
         // Found an obstacle. Next, find out how it is illuminated.
@@ -133,27 +139,28 @@ void RayTrace(XYZ* resultcolor, const XYZ* eye, const XYZ* dir, int k)
         // To smooth out the infinitely sharp shadows caused by
         // infinitely small point-lightsources, assume the lightsource
         // is actually a cloud of small lightsources around its center.
-        XYZ DiffuseLight = {{0,0,0}}, SpecularLight = {{0,0,0}};
-        XYZ Pigment = {{1, 0.98, 0.94}}; // default pigment
+        //DiffuseLight = {{0,0,0}}; SpecularLight = {{0,0,0}};
+        XYZ_set_values(&DiffuseLight, 0, 0, 0);
+        XYZ_set_values(&SpecularLight, 0, 0, 0);
+        XYZ_set_values(&Pigment, 1, 0.98, 0.94);
+        //XYZ Pigment = {{1, 0.98, 0.94}}; // default pigment
         for(unsigned i=0; i<NumLights; ++i)
             for(unsigned j=0; j<NumArealightVectors; ++j)
             {
-                XYZ V;
-                XYZ_add_struct(&V, &(Lights[i].where), &(ArealightVectors[j]));
-                XYZ_sub_struct_to(&V, &HitLoc);
-                double LightDist = XYZ_len(&V);
-                XYZ_normalize(&V);
-                double DiffuseEffect = XYZ_dot(&HitNormal, &V) / (double)NumArealightVectors;
+                XYZ VRT;
+                XYZ_add_struct(&VRT, &(Lights[i].where), &(ArealightVectors[j]));
+                XYZ_sub_struct_to(&VRT, &HitLoc);
+                double LightDist = XYZ_len(&VRT);
+                XYZ_normalize(&VRT);
+                double DiffuseEffect = XYZ_dot(&HitNormal, &VRT) / (double)NumArealightVectors;
                 double Attenuation = (1 + pow(LightDist / 34.0, 2.0));
                 DiffuseEffect /= Attenuation;
                 if(DiffuseEffect > 1e-3)
                 {
                     double ShadowDist = LightDist - 1e-4;
-                    XYZ a,b;
-                    XYZ eye;
-                    XYZ_mul_value(&eye, &V, 1e-4);
-                    XYZ_add_struct_to(&eye, &HitLoc);
-                    int q,t = RayFindObstacle(&eye, &V, &ShadowDist, &q, &a, &b);
+                    XYZ_mul_value(&neye, &VRT, 1e-4);
+                    XYZ_add_struct_to(&neye, &HitLoc);
+                    int q,t = RayFindObstacle(&neye, &VRT, &ShadowDist, &q, &a, &b);
                     if(t == -1) // No obstacle occluding the light?
                     {
                         XYZ_mul_value(&a, &(Lights[i].colour), DiffuseEffect);
@@ -164,13 +171,11 @@ void RayTrace(XYZ* resultcolor, const XYZ* eye, const XYZ* dir, int k)
         if(k > 1)
         {
             // Add specular light/reflection, unless recursion depth is at max
-            XYZ V;
-            XYZ_neg(&V, dir);
-            XYZ_mirror_arround(&V, &HitNormal);
-            XYZ eye;
-            XYZ_mul_value(&eye, &V, 1e-4);
-            XYZ_add_struct_to(&eye, &HitLoc);
-            RayTrace(&SpecularLight, &eye, &V, k-1);
+            XYZ_neg(&VRT2, dir);
+            XYZ_mirror_arround(&VRT2, &HitNormal);
+            XYZ_mul_value(&eye2, &VRT2, 1e-4);
+            XYZ_add_struct_to(&eye2, &HitLoc);
+            RayTrace(&SpecularLight, &eye2, &VRT2, k-1);
         }
         switch(HitType)
         {
@@ -195,10 +200,9 @@ void RayTrace(XYZ* resultcolor, const XYZ* eye, const XYZ* dir, int k)
                 XYZ_mul_value_to(&DiffuseLight, 1.0);
                 XYZ_mul_value_to(&SpecularLight, 0.34);
         }
-        XYZ res;
         XYZ_add_struct(&res, &DiffuseLight, &SpecularLight);
         XYZ_mul_struct_to(&res, &Pigment);
-        XYZ_set_struct(&resultcolor, &res);
+        XYZ_set_struct(resultcolor, &res);
     }
 }
 
@@ -237,6 +241,20 @@ void InitDither()
         }
 }
 
+XYZ camangle      = { {0,0,0} };
+XYZ camangledelta = { {-.005, -.011, -.017} };
+XYZ camlook       = { {0,0,0} };
+XYZ camlookdelta  = { {-.001, .005, .004} };
+XYZ campos;
+XYZ camray;
+Matrix camrotatematrix, camlookmatrix;
+XYZ campix;
+XYZ nCampix;
+XYZ campixG;
+XYZ qtryG;
+XYZ na;
+XYZ nqtryG;
+XYZ tt;
 int ray_demo_main()
 {
     video_card_set_video_mode(0x12);
@@ -245,10 +263,6 @@ int ray_demo_main()
 
     InitDither();
     InitArealightVectors();
-    XYZ camangle      = { {0,0,0} };
-    XYZ camangledelta = { {-.005, -.011, -.017} };
-    XYZ camlook       = { {0,0,0} };
-    XYZ camlookdelta  = { {-.001, .005, .004} };
 
     double zoom = 46.0, zoomdelta = 0.99;
     double contrast = 32, contrast_offset = -0.17;
@@ -258,9 +272,9 @@ int ray_demo_main()
     for(unsigned frameno=0; frameno<9300; ++frameno)
     {
         // Put camera between the central sphere and the walls
-        XYZ campos = { { 0.0, 0.0, 16.0} };
+        //XYZ campos = { { 0.0, 0.0, 16.0} };
+        XYZ_set_values(&campos, 0, 0, 16.0);
         // Rotate it around the center
-        Matrix camrotatematrix, camlookmatrix;
         Matrix_init_rotate(&camrotatematrix, &camangle);
         Matrix_transform(&camrotatematrix, &campos);
         Matrix_init_rotate(&camlookmatrix, &camlook);
@@ -274,13 +288,13 @@ int ray_demo_main()
         {
             for(unsigned x=0; x<W; ++x)
             {
-                XYZ camray = { { x / (double)W - 0.5,
-                                 y / (double)H - 0.5,
-                                 zoom } };
+                //XYZ camray = { { x / (double)W - 0.5,
+                //                 y / (double)H - 0.5,
+                //                 zoom } };
+                XYZ_set_values(&camray,  x / (double)W - 0.5, y / (double)H - 0.5, zoom);
                 camray.d[0] *= 4.0/3; // Aspect ratio correction
                 XYZ_normalize(&camray);
                 Matrix_transform(&camlookmatrix, &camray);
-                XYZ campix;
                 RayTrace(&campix, &campos, &camray, MAXTRACE);
                 XYZ_mul_value_to(&campix, 0.5);
               #pragma omp critical
@@ -293,15 +307,13 @@ int ray_demo_main()
                 #pragma omp flush(thisframe_min,thisframe_max)
               }
                 // Exaggerate the colors to bring contrast better forth
-                XYZ nCampix;
                 XYZ_add_value(&nCampix, &campix, contrast_offset);
                 XYZ_mul_value_to(&nCampix, contrast);
                 XYZ_set_struct(&campix, &nCampix);
                 // Clamp, and compensate for display gamma (for dithering)
                 XYZ_clamp_with_desauration(&campix);
-                XYZ campixG;
                 XYZ_pow(&campixG, &campix, Gamma);
-                XYZ qtryG = campixG;
+                qtryG = campixG;
                 // Create candidate for dithering
                 unsigned candlist[CandCount];
                 for(unsigned i=0; i<CandCount; ++i)
@@ -311,7 +323,6 @@ int ray_demo_main()
                     // Find closest match from palette
                     for(unsigned j=0; j<16; ++j)
                     {
-                        XYZ na;
                         XYZ_sub_struct(&na, &qtryG, &(PalG[j]));
                         double a = XYZ_squared(&na);
                         if(a < b) { b = a; k = j; }
@@ -319,7 +330,6 @@ int ray_demo_main()
                     candlist[i] = k;
                     if(i+1 >= CandCount) break;
                     // Compensate for error
-                    XYZ nqtryG;
                     XYZ_sub_struct(&nqtryG, &campixG, &(PalG[k]));
                     XYZ_add_struct_to(&qtryG, &nqtryG);
                     XYZ_clamp(&qtryG);
@@ -361,11 +371,10 @@ int ray_demo_main()
         }
 
         // Update the rotation angle
-        XYZ t;
-        XYZ_mul_value(&t, &camlookdelta, much);
-        XYZ_add_struct_to(&camlook, &t);
-        XYZ_mul_value(&t, &camangledelta, much);
-        XYZ_add_struct_to(&camangle, &t);
+        XYZ_mul_value(&tt, &camlookdelta, much);
+        XYZ_add_struct_to(&camlook, &tt);
+        XYZ_mul_value(&tt, &camangledelta, much);
+        XYZ_add_struct_to(&camangle, &tt);
 
         // Dynamically readjust the contrast based on the contents
         // of the last frame
@@ -385,4 +394,5 @@ int ray_demo_main()
     video_card_set_video_mode(0x03);
     //_asm { mov ax, 0x03; int 0x10 };
     // Set 80x25 text mode.
+    return 0;
 }
